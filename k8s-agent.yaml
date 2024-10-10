@@ -1,0 +1,108 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: anylb-k8s-agent
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: anylb-k8s-agent-role
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "pods", "services", "configmaps", "secrets", "serviceaccounts"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterroles", "clusterrolebindings"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: anylb-k8s-agent-role-binding
+subjects:
+- kind: ServiceAccount
+  name: anylb-k8s-agent
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: anylb-k8s-agent-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: anylb-k8s-agent-secret
+type: Opaque
+stringData:
+  cluster-id: "3b749f1e-0dbf-4854-a7ca-f5b79d839523"
+  cluster-secret: "6610f80a-93fb-4ca2-ad66-1d73ad3aa426"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anylb-k8s-agent
+  labels:
+    app: anylb-k8s-agent
+    anylb-agent-id: "1"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: anylb-k8s-agent
+  template:
+    metadata:
+      labels:
+        app: anylb-k8s-agent
+    spec:
+      serviceAccountName: anylb-k8s-agent
+      containers:
+      - name: anylb-k8s-agent
+        image: anylb-k8s-agent:latest
+        imagePullPolicy: Never
+        env:
+        - name: CLUSTER_ID
+          valueFrom:
+            secretKeyRef:
+              name: anylb-k8s-agent-secret
+              key: cluster-id
+        - name: CLUSTER_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: anylb-k8s-agent-secret
+              key: cluster-secret
+        - name: BACKEND_HOST
+          value: 172.16.1.5:4050
+        - name: BACKEND_TLS
+          value: "false"
+        volumeMounts:
+        - name: kube-api-access
+          mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+          readOnly: true
+      volumes:
+      - name: kube-api-access
+        projected:
+          sources:
+          - serviceAccountToken:
+              expirationSeconds: 3600
+              path: token
+          - configMap:
+              name: kube-root-ca.crt
+              items:
+              - key: ca.crt
+                path: ca.crt
+          - downwardAPI:
+              items:
+              - path: namespace
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+---
